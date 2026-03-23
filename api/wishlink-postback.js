@@ -77,19 +77,31 @@ export default async function handler(req, res) {
     params.set("campaign_id", campaignId);
     params.set("creative_id", creativeId);
 
-    const postbackUrl = `https://wishlink.com/postback?${params.toString()}`;
+    const baseUrl =
+      process.env.WISHLINK_POSTBACK_URL || "https://wishlink.com/postback";
+    const postbackUrl = `${baseUrl}?${params.toString()}`;
 
     console.log("Firing Wishlink postback:", postbackUrl);
 
-    const fetchRes = await fetch(postbackUrl);
+    let fetchRes;
+    try {
+      fetchRes = await fetch(postbackUrl);
+    } catch (fetchErr) {
+      console.error("Wishlink postback fetch error:", fetchErr.message);
+      // Return 200 to Shopify so it doesn't retry; we logged the failure
+      return res.status(200).send("OK");
+    }
 
     if (!fetchRes.ok) {
+      const body = await fetchRes.text();
       console.error(
-        "Wishlink postback failed:",
+        "Wishlink postback returned",
         fetchRes.status,
-        await fetchRes.text()
+        "—",
+        body?.slice?.(0, 200) || body
       );
-      return res.status(502).send("Postback request failed");
+      // Return 200 to Shopify so it doesn't retry; Wishlink may reject invalid clickids
+      return res.status(200).send("OK");
     }
 
     console.log("Wishlink postback sent successfully");
