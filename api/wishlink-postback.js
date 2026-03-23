@@ -1,20 +1,3 @@
-/**
- * Wishlink Postback Webhook - Vercel Serverless Function
- *
- * Receives Shopify order webhook, extracts tracking params from note_attributes
- * (set by theme from URL → localStorage → cart attributes), and fires postback to Wishlink.
- *
- * Webhook URL: https://wishlink-postback-simple.vercel.app/api/wishlink-postback
- */
-
-/**
- * Safely extract a value from Shopify order note_attributes array.
- * note_attributes: [{ name: "clickid", value: "abc123" }, ...]
- *
- * @param {Object} order - Shopify order object
- * @param {string} key - Attribute name (e.g. "clickid", "goal_id")
- * @returns {string|null} - Attribute value or null if not found
- */
 function getNoteAttribute(order, key) {
   const attrs = order?.note_attributes;
   if (!Array.isArray(attrs)) return null;
@@ -31,83 +14,77 @@ export default async function handler(req, res) {
     const order = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
 
     if (!order || typeof order !== "object") {
-      console.error("Invalid webhook payload: missing or invalid order object");
+      console.error("Invalid webhook payload");
       return res.status(400).send("Invalid payload");
     }
 
-    // Extract order fields
     const orderId = order.id;
     const amount = order.total_price;
     const currency = order.currency;
 
-    if (orderId == null) {
-      console.error("Invalid webhook payload: missing order.id");
-      return res.status(400).send("Missing order id");
-    }
-
-    // Transaction ID: first transaction if exists, else fallback to order.id
     const transactionId =
       order?.transactions?.[0]?.id != null
         ? String(order.transactions[0].id)
         : String(orderId);
 
-    // Extract tracking params from note_attributes (from cart attributes)
-    const clickid =
-      getNoteAttribute(order, "clickid") || String(orderId);
+    // ✅ STRICT extraction (NO FALLBACKS)
+    const clickid = getNoteAttribute(order, "clickid");
     const goalId =
-      getNoteAttribute(order, "goal_id") ||
-      process.env.WISHLINK_GOAL_ID ||
-      "default_goal";
+      getNoteAttribute(order, "goal_id") || process.env.WISHLINK_GOAL_ID;
     const campaignId =
-      getNoteAttribute(order, "campaign_id") ||
-      process.env.WISHLINK_CAMPAIGN_ID ||
-      "default_campaign";
+      getNoteAttribute(order, "campaign_id") || process.env.WISHLINK_CAMPAIGN_ID;
     const creativeId =
-      getNoteAttribute(order, "creative_id") ||
-      process.env.WISHLINK_CREATIVE_ID ||
-      "default_creative";
+      getNoteAttribute(order, "creative_id") || process.env.WISHLINK_CREATIVE_ID;
 
-    // Build Wishlink postback URL with encoded values
+    // 🔥 VALIDATION BLOCK (CRITICAL)
+    if (!clickid) {
+      console.error("Missing clickid — skipping postback");
+      return res.status(200).send("No clickid");
+    }
+
+    if (!goalId || !campaignId || !creativeId) {
+      console.error("Missing campaign data — skipping postback");
+      return res.status(200).send("Missing campaign data");
+    }
+
+    // Build URL
     const params = new URLSearchParams();
     params.set("clickid", clickid);
     params.set("transaction_id", transactionId);
     params.set("payout", String(amount ?? "0"));
-    params.set("currency", currency || "USD");
+    params.set("currency", currency || "INR");
     params.set("goal_id", goalId);
     params.set("campaign_id", campaignId);
     params.set("creative_id", creativeId);
 
     const baseUrl =
       process.env.WISHLINK_POSTBACK_URL || "https://wishlink.com/postback";
+
     const postbackUrl = `${baseUrl}?${params.toString()}`;
 
-    console.log("Firing Wishlink postback:", postbackUrl);
+    console.log("📤 Sending Wishlink postback:", {
+      clickid,
+      transactionId,
+      amount,
+      currency,
+      goalId,
+      campaignId,
+      creativeId,
+    });
 
-    let fetchRes;
-    try {
-      fetchRes = await fetch(postbackUrl);
-    } catch (fetchErr) {
-      console.error("Wishlink postback fetch error:", fetchErr.message);
-      // Return 200 to Shopify so it doesn't retry; we logged the failure
-      return res.status(200).send("OK");
-    }
+    const fetchRes = await fetch(postbackUrl);
+
+    const responseText = await fetchRes.text();
 
     if (!fetchRes.ok) {
-      const body = await fetchRes.text();
-      console.error(
-        "Wishlink postback returned",
-        fetchRes.status,
-        "—",
-        body?.slice?.(0, 200) || body
-      );
-      // Return 200 to Shopify so it doesn't retry; Wishlink may reject invalid clickids
-      return res.status(200).send("OK");
+      console.error("❌ Wishlink rejected:", fetchRes.status, responseText);
+      return res.status(200).send("Wishlink rejected");
     }
 
-    console.log("Wishlink postback sent successfully");
+    console.log("✅ Wishlink success:", responseText);
     res.status(200).send("OK");
   } catch (err) {
-    console.error("Wishlink postback error:", err);
+    console.error("💥 Server error:", err);
     res.status(500).send("Error");
   }
 }
