@@ -5,13 +5,22 @@ function getNoteAttribute(order, key) {
   return item && typeof item.value === "string" ? item.value : null;
 }
 
+function extractClickId(order) {
+  return (
+    getNoteAttribute(order, "utm_campaign") ||
+    getNoteAttribute(order, "clickid") ||
+    null
+  );
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
-    const order = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    const order =
+      typeof req.body === "string" ? JSON.parse(req.body) : req.body;
 
     if (!order || typeof order !== "object") {
       console.error("Invalid webhook payload");
@@ -27,27 +36,29 @@ export default async function handler(req, res) {
         ? String(order.transactions[0].id)
         : String(orderId);
 
-    // ✅ STRICT extraction (NO FALLBACKS)
-    const clickid = getNoteAttribute(order, "clickid");
-    const goalId =
-      getNoteAttribute(order, "goal_id") || process.env.WISHLINK_GOAL_ID;
-    const campaignId =
-      getNoteAttribute(order, "campaign_id") || process.env.WISHLINK_CAMPAIGN_ID;
-    const creativeId =
-      getNoteAttribute(order, "creative_id") || process.env.WISHLINK_CREATIVE_ID;
+    // 🔥 DEMO MODE (force clickid if missing)
+    let clickid = extractClickId(order);
 
-    // 🔥 VALIDATION BLOCK (CRITICAL)
     if (!clickid) {
-      console.error("Missing clickid — skipping postback");
-      return res.status(200).send("No clickid");
+      clickid = "wl_test_dummy_123"; // 👈 demo fallback
+      console.warn("⚠️ Using dummy clickid for testing");
     }
 
-    if (!goalId || !campaignId || !creativeId) {
-      console.error("Missing campaign data — skipping postback");
-      return res.status(200).send("Missing campaign data");
-    }
+    const goalId =
+      getNoteAttribute(order, "goal_id") ||
+      process.env.WISHLINK_GOAL_ID ||
+      "purchase"; // demo fallback
 
-    // Build URL
+    const campaignId =
+      getNoteAttribute(order, "campaign_id") ||
+      process.env.WISHLINK_CAMPAIGN_ID ||
+      "camp_test";
+
+    const creativeId =
+      getNoteAttribute(order, "creative_id") ||
+      process.env.WISHLINK_CREATIVE_ID ||
+      "cr_test";
+
     const params = new URLSearchParams();
     params.set("clickid", clickid);
     params.set("transaction_id", transactionId);
@@ -58,22 +69,14 @@ export default async function handler(req, res) {
     params.set("creative_id", creativeId);
 
     const baseUrl =
-      process.env.WISHLINK_POSTBACK_URL || "https://wishlink.com/postback";
+      process.env.WISHLINK_POSTBACK_URL ||
+      "https://wishlink.com/postback"; // ⚠️ still verify
 
     const postbackUrl = `${baseUrl}?${params.toString()}`;
 
-    console.log("📤 Sending Wishlink postback:", {
-      clickid,
-      transactionId,
-      amount,
-      currency,
-      goalId,
-      campaignId,
-      creativeId,
-    });
+    console.log("📤 FINAL POSTBACK URL:", postbackUrl);
 
     const fetchRes = await fetch(postbackUrl);
-
     const responseText = await fetchRes.text();
 
     if (!fetchRes.ok) {
@@ -82,9 +85,10 @@ export default async function handler(req, res) {
     }
 
     console.log("✅ Wishlink success:", responseText);
-    res.status(200).send("OK");
+    return res.status(200).send("OK");
+
   } catch (err) {
     console.error("💥 Server error:", err);
-    res.status(500).send("Error");
+    return res.status(500).send("Error");
   }
 }
