@@ -7,9 +7,10 @@ End-to-end tracking: URL params → localStorage → cart attributes → order w
 ## Architecture
 
 ```
-User visits: store.com?clickid=abc&goal_id=g1&campaign_id=c1&creative_id=cr1
+User visits (Wishlink): store.com?atgSessionId=xyz&utm_campaign=xyz&utm_source=wishlink
+   OR explicit: store.com?clickid=abc&goal_id=g1&campaign_id=c1&creative_id=cr1
        ↓
-PART 1: theme.liquid reads URL, stores in localStorage (only if value exists)
+PART 1: theme.liquid reads URL, stores in localStorage (atgSessionId, utm_campaign, clickid, etc.)
        ↓
 PART 2: theme.liquid syncs localStorage → Shopify cart via POST /cart/update.js
        ↓
@@ -28,7 +29,7 @@ PART 4–5: Builds Wishlink URL, fires GET postback
 
 **Location:** `layout/theme.liquid` – script before `</body>`
 
-- Uses `URLSearchParams` to read `clickid`, `goal_id`, `campaign_id`, `creative_id`
+- Reads `atgSessionId`, `utm_campaign`, `clickid`, `goal_id`, `campaign_id`, `creative_id`, `utm_source`, `utm_medium` (Wishlink uses atgSessionId as click ID)
 - Only stores if value exists; does not overwrite existing with empty
 - Sends to cart via `POST /cart/update.js` with `{ attributes: { key: value } }`
 - Basic guard to avoid repeated calls (sessionStorage)
@@ -44,7 +45,7 @@ PART 4–5: Builds Wishlink URL, fires GET postback
 - `order.total_price` → payout
 - `order.currency` → currency
 - `order.transactions[0].id` or `order.id` → transaction_id
-- `note_attributes` → clickid, goal_id, campaign_id, creative_id
+- `note_attributes` → clickid (from atgSessionId || utm_campaign || clickid), goal_id, campaign_id, creative_id
 
 **Wishlink URL format:**
 ```
@@ -99,7 +100,8 @@ All values are URL-encoded via `URLSearchParams`.
 
 ### 1. Test Theme Capture (URL → localStorage)
 
-1. Visit: `https://YOUR-STORE.myshopify.com?clickid=test123&goal_id=g1&campaign_id=c1&creative_id=cr1`
+1. Visit with Wishlink params: `https://YOUR-STORE.com?atgSessionId=nm5hHW65u3VhHmnKqyQwy8_p41232671&utm_source=wishlink&utm_medium=wishlink.com&utm_campaign=nm5hHW65u3VhHmnKqyQwy8_p41232671`
+   Or explicit: `https://YOUR-STORE.com?clickid=test123&goal_id=g1&campaign_id=c1&creative_id=cr1`
 2. Open DevTools → **Application** → **Local Storage**
 3. Check: `wishlink_clickid`, `wishlink_goal_id`, etc. have values
 

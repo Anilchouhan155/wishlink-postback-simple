@@ -7,6 +7,7 @@ function getNoteAttribute(order, key) {
 
 function extractClickId(order) {
   return (
+    getNoteAttribute(order, "atgSessionId") ||
     getNoteAttribute(order, "utm_campaign") ||
     getNoteAttribute(order, "clickid") ||
     null
